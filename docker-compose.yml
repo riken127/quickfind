@@ -1,0 +1,104 @@
+services:
+  traefik:
+    image: traefik:latest
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"     # api
+      - "8080:8080" # dashboard
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+  mongodb:
+    image: mongo:6
+    container_name: mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:7
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  nats:
+    image: nats:latest
+    container_name: nats
+    restart: always
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: "--js"
+  
+  typesense:
+    image: typesense/typesense:28.0
+    container_name: typesense
+    restart: always
+    ports:
+      - "8108:8108"
+    environment:
+      TYPESENSE_API_KEY: "xyz123"
+      TYPESENSE_DATA_DIR: "/data"
+    volumes:
+      - typesense_data:/data 
+  
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    restart: always
+    ports:
+      - "9411:9411"
+
+  product-service:
+    image: product-service:latest
+    container_name: product-service
+    restart: always
+    depends_on:
+      - mongodb
+      - redis
+      - nats
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/products
+      SPRING_REDIS_HOST: redis
+      NATS_URL: nats://nats:4222
+      ZIPKIN_URL: http://zipkin:9411/api/v2/spans
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.product-service.rule=Host(`localhost`) && PathPrefix(`/products`)"
+
+  indexing-service:
+    image: indexing-service:latest
+    container_name: indexing-service
+    restart: always
+    depends_on:
+      - nats
+      - typesense
+    environment:
+      NATS_URL: nats://nats:4222
+      TYPESENSE_API_URL: http://typesense:8108
+      TYPESENSE_API_KEY: xyz123
+      ZIPKIN_URL: http://zipkin:9411/api/v2/spans
+
+  search-service:
+    image: search-service:latest
+    container_name: search-service
+    restart: always
+    depends_on:
+      - typesense
+    environment:
+      TYPESENSE_API_URL: http://typesense:8108
+      TYPESENSE_API_KEY: xyz123
+      ZIPKIN_URL: http://zipkin:9411/api/v2/spans
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.search-service.rule=Host(`localhost`) && PathPrefix(`/search`)"
+
+volumes:
+  mongo_data:
+  typesense_data:
